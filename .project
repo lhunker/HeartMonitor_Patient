@@ -3,6 +3,7 @@
 	<name>PulseMonitor</name>
 	<comment></comment>
 	<projects>
+		<project>lpmsp430g2553_core</project>
 	</projects>
 	<buildSpec>
 		<buildCommand>

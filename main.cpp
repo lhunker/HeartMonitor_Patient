@@ -1,5 +1,16 @@
-#include <msp430.h> 
+#include <msp430.h>
+#include "nRF24L01.h"
 #include "printstuff.h"
+#include "spi.h"
+
+//TODO put these in a header file
+void _writeReg(unsigned char addr, unsigned char val);
+int read_reg (unsigned char addr);
+void _writeRegMultiLSB(unsigned char addr, unsigned char *buf, int len);
+void sendMsg(unsigned char msg);
+int recvMsg();
+
+const unsigned char txaddr[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0x01 };
 
 //Variables
 volatile int BPM;                   // used to hold the pulse rate
@@ -77,30 +88,32 @@ __interrupt void ADC10_ISR (void){
 	}
 
 	if (sig < thresh && Pulse == true){   // when the values are going down, the beat is over
-	    P1OUT &= ~BIT6;          // turn off pin 13 LED
-	    Pulse = false;                         // reset the Pulse flag so we can do it again
-	    amp = P - T;                           // get amplitude of the pulse wave
-	    thresh = amp/2 + T;                    // set thresh at 50% of the amplitude
-	    P = thresh;                            // reset these for next time
-	    T = thresh;
-	  }
+		P1OUT &= ~BIT6;          // turn off pin 13 LED
+		Pulse = false;                         // reset the Pulse flag so we can do it again
+		amp = P - T;                           // get amplitude of the pulse wave
+		thresh = amp/2 + T;                    // set thresh at 50% of the amplitude
+		P = thresh;                            // reset these for next time
+		T = thresh;
+	}
 
-	  if (time > 2500){                           // if 2.5 seconds go by without a beat
-	    thresh = 512;                          // set thresh default
-	    P = 512;                               // set P default
-	    T = 512;                               // set T default
-	    lastBeatTime = sampleCounter;          // bring the lastBeatTime up to date
-	    firstBeat = true;                      // set these to avoid noise
-	    secondBeat = false;                    // when we get the heartbeat back
-	  }
+	if (time > 2500){                           // if 2.5 seconds go by without a beat
+		thresh = 512;                          // set thresh default
+		P = 512;                               // set P default
+		T = 512;                               // set T default
+		lastBeatTime = sampleCounter;          // bring the lastBeatTime up to date
+		firstBeat = true;                      // set these to avoid noise
+		secondBeat = false;                    // when we get the heartbeat back
+	}
 }
 
 // Timer A0 interrupt service routine
 #pragma vector=TIMER0_A0_VECTOR
 __interrupt void Timer_A (void)
 {
-  ADC10CTL0 |= ENC + ADC10SC;
+	ADC10CTL0 |= ENC + ADC10SC;
 }
+
+
 
 /*
  * main.c
@@ -117,12 +130,28 @@ int main(void) {
 	TACCTL0 = CCIE;
 	TACTL = TASSEL_1 + MC_1 + ID_0;
 	TACCR0 =  65;	//set count to 1 sec
+	printf("startup\n\r");
+	spi_init();
+
+	//setup registers TODO check this
+	_writeReg(RF24_CONFIG, 0x00);  // Deep power-down, everything disabled
+	_writeReg(RF24_EN_AA, 0x03);
+	_writeReg(RF24_EN_RXADDR, 0x03);
+	_writeReg(RF24_RF_SETUP, 0x0B);
+	_writeReg(RF24_DYNPD, 0x03);
+	_writeReg(RF24_FEATURE, RF24_EN_DPL);  // Dynamic payloads enabled by default
+	_writeRegMultiLSB(RF24_TX_ADDR, (unsigned char *)txaddr, 5);
+	_writeRegMultiLSB(RF24_RX_ADDR_P0, (unsigned char *)txaddr, 5);
+	int out = read_reg(RF24_FEATURE);
+	printf("Status is %i\n\r", out);
+
 	_enable_interrupt();
 
 
 	while (1){
 		if (QS){
 			printf("BPM is %i\n\r", BPM);
+			sendMsg(BPM);
 			QS = false;
 		}
 	}
