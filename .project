@@ -4,6 +4,8 @@
 	<comment></comment>
 	<projects>
 		<project>lpmsp430g2553_core</project>
+		<project>lpmsp430g2553_SPI</project>
+		<project>lpmsp430g2553_Enrf24</project>
 	</projects>
 	<buildSpec>
 		<buildCommand>

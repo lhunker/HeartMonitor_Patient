@@ -1,5 +1,11 @@
 #include "Energia.h"
+#include <Enrf24.h>
+#include <nRF24L01.h>
+#include <SPI.h>
 #include <msp430.h>
+#include <string.h>
+
+String dump_radio_status_to_serialport(uint8_t);
 
 //Variables
 volatile int BPM;                   // used to hold the pulse rate
@@ -7,6 +13,8 @@ volatile int Signal;                // holds the incoming raw data
 volatile int IBI = 600;             // holds the time between beats, must be seeded!
 volatile bool Pulse = false;     // true when pulse wave is high, false when it's low
 volatile bool QS = false;        // becomes true when Arduoino finds a beat.
+volatile int QScnt = 0;
+volatile int BPMtotal = 0;
 
 //Global Variables
 volatile int rate[10];                    // array to hold last ten IBI values
@@ -21,32 +29,78 @@ volatile bool secondBeat = false;      // used to seed rate array so we startup 
 
 void setup();
 void loop();
+void startRadio();
+void stopRadio();
 
+Enrf24 radio(P2_0, P2_1, P2_2);  // P2.0=CE, P2.1=CSN, P2.2=IRQ
+const uint8_t txaddr[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0x01 };
 
 void setup() {
-//	WDTCTL = WDTPW | WDTHOLD;	// Stop watchdog timer
-	Serial.begin(9600);
-	Serial.println("Hello");
+	//	WDTCTL = WDTPW | WDTHOLD;	// Stop watchdog timer
+	Serial.begin(9600);			//debug mode only
+	Serial.println("Starting Up");
+
+
+
 	P1SEL |= BIT0;
-	P1DIR |= BIT6;
 	ADC10CTL1 = INCH_0 + ADC10DIV_3 ; // Channel 5, ADC10CLK/4
 	ADC10CTL0 = SREF_0 + ADC10SHT_3 + ADC10ON + ADC10IE; //Vcc & Vss as reference
 	ADC10AE0 |= BIT0;
 
-	TACCTL0 = CCIE;
+
 	TACTL = TASSEL_1 + MC_1 + ID_0;
 	TACCR0 =  65;	//set count to 1 sec
-	interrupts();
-
+	TACCTL0 = CCIE;
+	//	QS = true;
+	//	BPM = 111;
 
 }
 
+void startRadio(){
+	TACCTL0 &= ~CCIE;
+	SPI.begin();
+	SPI.setDataMode(SPI_MODE0);
+	SPI.setBitOrder(MSBFIRST);
+
+	radio.begin();  // Defaults 1Mbps, channel 0, max TX power
+
+	radio.setTXaddress((void*)txaddr);
+	dump_radio_status_to_serialport(radio.radioState());
+}
+
+void stopRadio(){
+	radio.end();
+	SPI.end();
+	TACTL = TASSEL_1 + MC_1 + ID_0;
+	TACCR0 =  65;	//set count to 1 sec
+	TACCTL0 = CCIE;
+}
+
 void loop() {
-  // put your main code here, to run repeatedly: 
 	if (QS){
 		Serial.print("BPM is ");
 		Serial.println(BPM);
+		QScnt++;
+		BPMtotal += BPM;
 		QS = false;
+	}
+
+	if(QScnt >= 10){
+		startRadio();
+		String stat = dump_radio_status_to_serialport(radio.radioState());
+		int avgBPM = BPMtotal /QScnt;
+		radio.print(avgBPM);
+		radio.flush();
+		Serial.print("Sent BPM: ");
+		Serial.println(avgBPM);
+		Serial.print("Reciver Mode: ");
+		Serial.println(stat);
+		Serial.flush();
+
+		QScnt = 0;
+		BPMtotal = 0;
+		stopRadio();
+
 	}
 }
 
@@ -73,7 +127,7 @@ __interrupt void ADC10_ISR (void){
 	if (time > 250){                                   // avoid high frequency noise
 		if ( (sig > thresh) && (Pulse == false) && (time > (IBI/5)*3) ){
 			Pulse = true;                               // set the Pulse flag when we think there is a pulse
-			P1OUT |= BIT6;
+//			digitalWrite(P1_6, HIGH);
 			IBI = sampleCounter - lastBeatTime;         // measure time between beats in mS
 			lastBeatTime = sampleCounter;               // keep track of time for next pulse
 
@@ -109,28 +163,57 @@ __interrupt void ADC10_ISR (void){
 	}
 
 	if (sig < thresh && Pulse == true){   // when the values are going down, the beat is over
-	    P1OUT &= ~BIT6;          // turn off pin 13 LED
-	    Pulse = false;                         // reset the Pulse flag so we can do it again
-	    amp = P - T;                           // get amplitude of the pulse wave
-	    thresh = amp/2 + T;                    // set thresh at 50% of the amplitude
-	    P = thresh;                            // reset these for next time
-	    T = thresh;
-	  }
+//		digitalWrite(P1_6, LOW);          // turn off pin 13 LED
+		Pulse = false;                         // reset the Pulse flag so we can do it again
+		amp = P - T;                           // get amplitude of the pulse wave
+		thresh = amp/2 + T;                    // set thresh at 50% of the amplitude
+		P = thresh;                            // reset these for next time
+		T = thresh;
+	}
 
-	  if (time > 2500){                           // if 2.5 seconds go by without a beat
-	    thresh = 512;                          // set thresh default
-	    P = 512;                               // set P default
-	    T = 512;                               // set T default
-	    lastBeatTime = sampleCounter;          // bring the lastBeatTime up to date
-	    firstBeat = true;                      // set these to avoid noise
-	    secondBeat = false;                    // when we get the heartbeat back
-	  }
+	if (time > 2500){                           // if 2.5 seconds go by without a beat
+		thresh = 512;                          // set thresh default
+		P = 512;                               // set P default
+		T = 512;                               // set T default
+		lastBeatTime = sampleCounter;          // bring the lastBeatTime up to date
+		firstBeat = true;                      // set these to avoid noise
+		secondBeat = false;                    // when we get the heartbeat back
+	}
+}
+
+String dump_radio_status_to_serialport(uint8_t status)
+{
+//	Serial.print("Enrf24 radio transceiver status: ");
+	switch (status) {
+	case ENRF24_STATE_NOTPRESENT:
+		return "NO TRANSCEIVER PRESENT";
+		break;
+
+	case ENRF24_STATE_DEEPSLEEP:
+		return "DEEP SLEEP <1uA power consumption";
+		break;
+
+	case ENRF24_STATE_IDLE:
+		return "IDLE module powered up w/ oscillators running";
+		break;
+
+	case ENRF24_STATE_PTX:
+		return "Actively Transmitting";
+		break;
+
+	case ENRF24_STATE_PRX:
+		return "Receive Mode";
+		break;
+
+	default:
+		return "UNKNOWN STATUS CODE";
+	}
 }
 
 // Timer A0 interrupt service routine
 #pragma vector=TIMER0_A0_VECTOR
-__interrupt void Timer_A (void)
+__interrupt void TA0_ISR(void)
 {
-  ADC10CTL0 |= ENC + ADC10SC;
+	ADC10CTL0 |= ENC + ADC10SC;
 }
 
