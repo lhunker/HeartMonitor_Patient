@@ -7,6 +7,8 @@
 
 String dump_radio_status_to_serialport(uint8_t);
 
+#define debug 0 //sets debug to computer mode
+
 //Variables
 volatile int BPM;                   // used to hold the pulse rate
 volatile int Signal;                // holds the incoming raw data
@@ -17,7 +19,7 @@ volatile int QScnt = 0;
 volatile int BPMtotal = 0;
 
 //Global Variables
-volatile int rate[10];                    // array to hold last ten IBI values
+volatile int rate[10];                    			// array to hold last ten IBI values
 volatile unsigned long sampleCounter = 0;          // used to determine pulse timing
 volatile unsigned long lastBeatTime = 0;           // used to find IBI
 volatile int P =512;                      // used to find peak in pulse wave, seeded
@@ -32,13 +34,15 @@ void loop();
 void startRadio();
 void stopRadio();
 
-Enrf24 radio(P2_0, P2_1, P2_2);  // P2.0=CE, P2.1=CSN, P2.2=IRQ
+Enrf24 radio(P2_1, P2_0, P1_3);  // P2.0=CE, P2.1=CSN, P2.2=IRQ
 const uint8_t txaddr[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0x01 };
 
 void setup() {
 	//	WDTCTL = WDTPW | WDTHOLD;	// Stop watchdog timer
-	Serial.begin(9600);			//debug mode only
-	Serial.println("Starting Up");
+	if(debug){
+		Serial.begin(9600);			//debug mode only
+		Serial.println("Starting Up");
+	}
 
 
 
@@ -51,13 +55,12 @@ void setup() {
 	TACTL = TASSEL_1 + MC_1 + ID_0;
 	TACCR0 =  65;	//set count to 1 sec
 	TACCTL0 = CCIE;
-	//	QS = true;
-	//	BPM = 111;
+	if(!debug)
+		startRadio();
 
 }
 
 void startRadio(){
-	TACCTL0 &= ~CCIE;
 	SPI.begin();
 	SPI.setDataMode(SPI_MODE0);
 	SPI.setBitOrder(MSBFIRST);
@@ -78,28 +81,20 @@ void stopRadio(){
 
 void loop() {
 	if (QS){
-		Serial.print("BPM is ");
-		Serial.println(BPM);
-		QScnt++;
-		BPMtotal += BPM;
+		if (debug){
+			Serial.print("BPM is ");
+			Serial.println(BPM);
+		}
 		QS = false;
-	}
-
-	if(QScnt >= 10){
-		startRadio();
 		String stat = dump_radio_status_to_serialport(radio.radioState());
-		int avgBPM = BPMtotal /QScnt;
-		radio.print(avgBPM);
-		radio.flush();
-		Serial.print("Sent BPM: ");
-		Serial.println(avgBPM);
-		Serial.print("Reciver Mode: ");
-		Serial.println(stat);
-		Serial.flush();
-
-		QScnt = 0;
-		BPMtotal = 0;
-		stopRadio();
+		if(!debug){
+			radio.print(BPM);
+			radio.flush();
+		}else{
+			Serial.print("Reciver Mode: ");
+			Serial.println(stat);
+		}
+		//		stopRadio();
 
 	}
 }
@@ -127,7 +122,7 @@ __interrupt void ADC10_ISR (void){
 	if (time > 250){                                   // avoid high frequency noise
 		if ( (sig > thresh) && (Pulse == false) && (time > (IBI/5)*3) ){
 			Pulse = true;                               // set the Pulse flag when we think there is a pulse
-//			digitalWrite(P1_6, HIGH);
+
 			IBI = sampleCounter - lastBeatTime;         // measure time between beats in mS
 			lastBeatTime = sampleCounter;               // keep track of time for next pulse
 
@@ -163,7 +158,6 @@ __interrupt void ADC10_ISR (void){
 	}
 
 	if (sig < thresh && Pulse == true){   // when the values are going down, the beat is over
-//		digitalWrite(P1_6, LOW);          // turn off pin 13 LED
 		Pulse = false;                         // reset the Pulse flag so we can do it again
 		amp = P - T;                           // get amplitude of the pulse wave
 		thresh = amp/2 + T;                    // set thresh at 50% of the amplitude
@@ -183,7 +177,7 @@ __interrupt void ADC10_ISR (void){
 
 String dump_radio_status_to_serialport(uint8_t status)
 {
-//	Serial.print("Enrf24 radio transceiver status: ");
+	//	Serial.print("Enrf24 radio transceiver status: ");
 	switch (status) {
 	case ENRF24_STATE_NOTPRESENT:
 		return "NO TRANSCEIVER PRESENT";
