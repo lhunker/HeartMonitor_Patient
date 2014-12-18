@@ -1,3 +1,11 @@
+/*
+ * PulseMonitorPatient
+ * Author: Lukas Hunker
+ * This module reads the patients pulse and calculates heartrate.
+ * Sends heartrate out over radio using SPI and Enrf24 library
+ * Based off of pulse sensor amped code for arduino (https://github.com/WorldFamousElectronics/PulseSensor-Amped)
+ */
+
 #include "Energia.h"
 #include <Enrf24.h>
 #include <nRF24L01.h>
@@ -7,7 +15,7 @@
 
 String dump_radio_status_to_serialport(uint8_t);
 
-#define debug 0 //sets debug to computer mode
+#define debug 0 //sets whether debugging or running
 
 //Variables
 volatile int BPM;                   // used to hold the pulse rate
@@ -29,29 +37,27 @@ volatile int amp = 100;                   // used to hold amplitude of pulse wav
 volatile bool firstBeat = true;        // used to seed rate array so we startup with reasonable BPM
 volatile bool secondBeat = false;      // used to seed rate array so we startup with reasonable BPM
 
+//method defs
 void setup();
 void loop();
 void startRadio();
-void stopRadio();
 
 Enrf24 radio(P2_1, P2_0, P1_3);  // P2.0=CE, P2.1=CSN, P2.2=IRQ
 const uint8_t txaddr[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0x01 };
 
 void setup() {
-	//	WDTCTL = WDTPW | WDTHOLD;	// Stop watchdog timer
 	if(debug){
 		Serial.begin(9600);			//debug mode only
 		Serial.println("Starting Up");
 	}
 
-
-
+	//Setup ADC
 	P1SEL |= BIT0;
 	ADC10CTL1 = INCH_0 + ADC10DIV_3 ; // Channel 5, ADC10CLK/4
 	ADC10CTL0 = SREF_0 + ADC10SHT_3 + ADC10ON + ADC10IE; //Vcc & Vss as reference
 	ADC10AE0 |= BIT0;
 
-
+	//Setup timer
 	TACTL = TASSEL_1 + MC_1 + ID_0;
 	TACCR0 =  65;	//set count to 1 sec
 	TACCTL0 = CCIE;
@@ -71,15 +77,8 @@ void startRadio(){
 	dump_radio_status_to_serialport(radio.radioState());
 }
 
-void stopRadio(){
-	radio.end();
-	SPI.end();
-	TACTL = TASSEL_1 + MC_1 + ID_0;
-	TACCR0 =  65;	//set count to 1 sec
-	TACCTL0 = CCIE;
-}
-
 void loop() {
+	//if pulse, send out BPM
 	if (QS){
 		if (debug){
 			Serial.print("BPM is ");
@@ -94,12 +93,11 @@ void loop() {
 			Serial.print("Reciver Mode: ");
 			Serial.println(stat);
 		}
-		//		stopRadio();
 
 	}
 }
 
-
+//ADC interrupt
 #pragma vector=ADC10_VECTOR
 __interrupt void ADC10_ISR (void){
 	volatile int sig = ADC10MEM;
@@ -175,6 +173,7 @@ __interrupt void ADC10_ISR (void){
 	}
 }
 
+//For debugging
 String dump_radio_status_to_serialport(uint8_t status)
 {
 	//	Serial.print("Enrf24 radio transceiver status: ");
@@ -208,6 +207,6 @@ String dump_radio_status_to_serialport(uint8_t status)
 #pragma vector=TIMER0_A0_VECTOR
 __interrupt void TA0_ISR(void)
 {
-	ADC10CTL0 |= ENC + ADC10SC;
+	ADC10CTL0 |= ENC + ADC10SC;	//Trigger ADC conversion
 }
 
